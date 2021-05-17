@@ -26,7 +26,7 @@ class threadpool {
     std::queue<Task> tasks;
 
  private:
-    static void thread_fun(threadpool *);
+    void thread_fun();
 
  public:
     inline threadpool(int size);
@@ -35,6 +35,9 @@ class threadpool {
     template<class F, class... Args>
     auto commit(F f, Args... args) -> std::future<decltype(f(args...))>;
 
+    void join();
+    void close();
+
     int thread_num() const;
 };
 
@@ -42,41 +45,33 @@ threadpool::threadpool(int size) : stopped(false) {
     free_thread_num = size > 1 ? size : 1;
 
     for (int i = 0; i < free_thread_num; ++i) {
-        pool.emplace_back(std::bind(threadpool::thread_fun, this));
+        pool.emplace_back(std::bind(&threadpool::thread_fun, this));
     }
 }
 
 threadpool::~threadpool() {
-    stopped.store(true);
-
-    task_condition.notify_all();
-
-    for (auto &x : this->pool) {
-        if (x.joinable()) {    // 等待线程结束，如果线程死循环了，就出不去了
-            x.join();
-        }
-    }
+    this->join();
 }
 
-void threadpool::thread_fun(threadpool *object) {
+void threadpool::thread_fun() {
     threadpool::Task task;
-    while(!object->stopped) {
+    while(!this->stopped) {
         {
-            std::unique_lock<std::mutex> lock{object->m_lock};  // 加锁
-            object->task_condition.wait(                        // 这里面会先解锁，然后线程进入等待，被唤醒后重新加锁
-                lock, [object] {return object->stopped.load() || !object->tasks.empty();}
+            std::unique_lock<std::mutex> lock{this->m_lock};  // 加锁
+            this->task_condition.wait(                        // 这里面会先解锁，然后线程进入等待，被唤醒后重新加锁
+                lock, [this] {return this->stopped.load() || !this->tasks.empty();}
             );
-            if (object->stopped && object->tasks.empty()) {
+            if (this->stopped && this->tasks.empty()) {
                 return ;
             }
 
-            task = std::move(object->tasks.front());
-            object->tasks.pop();
+            task = std::move(this->tasks.front());
+            this->tasks.pop();
         } 
         
-        object->free_thread_num --;
+        this->free_thread_num --;
         task();
-        object->free_thread_num ++;
+        this->free_thread_num ++;
     }
 }
 
@@ -105,6 +100,22 @@ auto threadpool::commit(F f, Args... args) -> std::future<decltype(f(args...))> 
 
     this->task_condition.notify_one();
     return future;
+}
+
+void threadpool::close() {
+    stopped.store(true);
+}
+
+void threadpool::join() {
+    stopped.store(true);
+
+    task_condition.notify_all();
+
+    for (auto &x : this->pool) {
+        if (x.joinable()) {    // 等待线程结束，如果线程死循环了，就出不去了
+            x.join();
+        }
+    }
 }
 
 int threadpool::thread_num() const { 

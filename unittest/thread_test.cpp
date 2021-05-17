@@ -10,17 +10,27 @@
 
 std::mutex m_lock;
 
-void fun() {
-    std::cout << "asdf" << std::endl;
+void fun(int a) {
+    std::cout << a << std::endl;
+    sleep(1);
+    std::cout << "asdf " << a << std::endl;
 }
 
 int main() {
     threadpool pool(5);
-    
-    pool.commit(fun);
-    pool.commit(fun);
-    pool.commit(fun);
-    pool.commit(fun);
+    int a = 5;
+    auto func = [a]{fun(a);};
+    auto func2 = std::bind(fun, 5);
 
+    std::function<void(int)> func3 = std::bind(fun, 5);
+    
+    pool.commit(func2);
+    pool.commit(func2);
+    pool.commit(func2);
+    pool.commit(func2);
+    pool.commit(func2);
+    
+    pool.close();
+    pool.join();
     return 0;
 }
